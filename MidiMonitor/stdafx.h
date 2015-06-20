@@ -7,8 +7,10 @@
 #include <windows.h>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <mutex>
 #include <queue>
 #include <list>
 #include <set>
 #include <stack>
+#include <iostream>

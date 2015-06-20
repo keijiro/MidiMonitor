@@ -5,26 +5,32 @@ namespace
 	// MIDI message storage class
 	class MidiMessage
 	{
-		uint32_t source_id_;
+		uint32_t source_;
 		uint8_t status_;
 		uint8_t data1_;
 		uint8_t data2_;
 
 	public:
 
-		MidiMessage(uint32_t source_id, uint32_t rawData)
-			: source_id_(source_id), status_(rawData), data1_(rawData >> 8), data2_(rawData >> 16)
+		MidiMessage(uint32_t source, uint32_t rawData)
+			: source_(source), status_(rawData), data1_(rawData >> 8), data2_(rawData >> 16)
 		{
 		}
 
 		uint64_t Encode64Bit()
 		{
-			return source_id_ || ((uint64_t)status_ << 32) || ((uint64_t)data1_ << 40) || ((uint64_t)data2_ << 48);
+			uint64_t ul = source_;
+			ul |= (uint64_t)status_ << 32;
+			ul |= (uint64_t)data1_ << 40;
+			ul |= (uint64_t)data2_ << 48;
+			return ul;
 		}
 
-		void Print() const
+		std::string ToString()
 		{
-			std::printf("(%08X) %02X %02X %02X\n", source_id_, status_, data1_, data2_);
+			char temp[256];
+			std::snprintf(temp, sizeof(temp), "(%X) %02X %02X %02X", source_, status_, data1_, data2_);
+			return temp;
 		}
 	};
 
@@ -36,7 +42,7 @@ namespace
 	std::stack<HMIDIIN> handlers_to_close;
 
 	// Mutex for resources
-	std::mutex resource_lock;
+	std::recursive_mutex resource_lock;
 
 	// MIDI input callback
 	static void CALLBACK MidiInProc(HMIDIIN hMidiIn, UINT wMsg, DWORD_PTR dwInstance, DWORD_PTR dwParam1, DWORD_PTR dwParam2)
@@ -50,13 +56,23 @@ namespace
 		}
 		else if (wMsg == MIM_CLOSE)
 		{
-			std::printf("Device (%08X) disconnected", hMidiIn);
 			resource_lock.lock();
 			handlers_to_close.push(hMidiIn);
 			resource_lock.unlock();
 		}
 	}
 
+	// Retrieve a name of a given device.
+	std::wstring GetDeviceName(HMIDIIN handle)
+	{
+		auto casted_id = reinterpret_cast<UINT_PTR>(handle);
+		MIDIINCAPS caps;
+		if (midiInGetDevCaps(casted_id, &caps, sizeof(caps)) == MMSYSERR_NOERROR)
+			return caps.szPname;
+		return L"unknown";
+	}
+
+	// Open a MIDI device with a given ID
 	void OpenDevice(uint32_t id)
 	{
 		static const DWORD_PTR callback = reinterpret_cast<DWORD_PTR>(MidiInProc);
@@ -68,54 +84,62 @@ namespace
 				resource_lock.lock();
 				active_handlers.push_back(handle);
 				resource_lock.unlock();
+
+				std::wcout << L"Device opened: " << GetDeviceName(handle);
+				std::wcout << L" at " << handle << std::endl;
 			}
 			else
+			{
 				midiInClose(handle);
+			}
 		}
 	}
 
+	// Close a given handler.
+	void CloseDevice(HMIDIIN handle)
+	{
+		midiInClose(handle);
+
+		resource_lock.lock();
+		active_handlers.remove(handle);
+		resource_lock.unlock();
+
+		std::wcout << "Device closed: " << handle << std::endl;
+	}
+
+	// Open the all devices.
 	void OpenAllDevices()
 	{
 		int device_count = midiInGetNumDevs();
 		for (int i = 0; i < device_count; i++) OpenDevice(i);
 	}
 
+	// Refresh device handlers
 	void RefreshDevices()
 	{
 		resource_lock.lock();
 
+		// Close disconnected handlers.
 		while (!handlers_to_close.empty()) {
-			midiInClose(handlers_to_close.top());
-			active_handlers.remove(handlers_to_close.top());
+			CloseDevice(handlers_to_close.top());
 			handlers_to_close.pop();
 		}
 
-		std::set<uint32_t> active_ids;
-
-		for (auto& h : active_handlers) {
-			uint32_t id;
-			if (midiInGetID(h, &id) == MMSYSERR_NOERROR) {
-				active_ids.insert(id);
-			}
-		}
+		// Try open all devices to detect newly connected ones.
+		OpenAllDevices();
 
 		resource_lock.unlock();
-
-		int device_count = midiInGetNumDevs();
-		for (int i = 0; i < device_count; i++)
-		{
-			if (active_ids.count(i) == 0) OpenDevice(i);
-		}
 	}
 
+	// Close the all devices.
 	void CloseAllDevices()
 	{
-		for (auto& h : active_handlers)
-			midiInClose(h);
-		active_handlers.clear();
+		resource_lock.lock();
+		while (!active_handlers.empty())
+			CloseDevice(active_handlers.front());
+		resource_lock.unlock();
 	}
 }
-
 
 int _tmain(int argc, _TCHAR* argv[])
 {
@@ -127,7 +151,8 @@ int _tmain(int argc, _TCHAR* argv[])
 
 		while (!message_queue.empty())
 		{
-			message_queue.front().Print();
+			auto text = message_queue.front().ToString();
+			std::cout << text.c_str() << std::endl;
 			message_queue.pop();
 		}
 
