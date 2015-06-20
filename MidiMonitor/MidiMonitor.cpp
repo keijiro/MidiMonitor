@@ -2,17 +2,47 @@
 
 namespace
 {
+	// Basic type aliases
+	using DeviceHandle = HMIDIIN;
+	using DeviceID = uint32_t;
+
+#ifdef _WIN64
+
+	DeviceID DeviceHandleToID(DeviceHandle handle)
+	{
+		return static_cast<DeviceID>(reinterpret_cast<uint64_t>(handle));
+	}
+
+	DeviceHandle DeviceIDToHandle(DeviceID id)
+	{
+		return reinterpret_cast<DeviceHandle>(static_cast<uint64_t>(id));
+	}
+
+#else
+
+	DeviceID DeviceHandleToID(DeviceHandle handle)
+	{
+		return reinterpret_cast<DeviceID>(handle);
+	}
+
+	DeviceHandle DeviceIDToHandle(DeviceID id)
+	{
+		return reinterpret_cast<DeviceHandle>(id);
+	}
+
+#endif
+
 	// MIDI message storage class
 	class MidiMessage
 	{
-		uint32_t source_;
+		DeviceID source_;
 		uint8_t status_;
 		uint8_t data1_;
 		uint8_t data2_;
 
 	public:
 
-		MidiMessage(uint32_t source, uint32_t rawData)
+		MidiMessage(DeviceID source, uint32_t rawData)
 			: source_(source), status_(rawData), data1_(rawData >> 8), data2_(rawData >> 16)
 		{
 		}
@@ -38,8 +68,8 @@ namespace
 	std::queue<MidiMessage> message_queue;
 
 	// Device handler lists
-	std::list<HMIDIIN> active_handlers;
-	std::stack<HMIDIIN> handlers_to_close;
+	std::list<DeviceHandle> active_handles;
+	std::stack<DeviceHandle> handles_to_close;
 
 	// Mutex for resources
 	std::recursive_mutex resource_lock;
@@ -49,21 +79,22 @@ namespace
 	{
 		if (wMsg == MIM_DATA)
 		{
-			auto source_id = reinterpret_cast<uint32_t>(hMidiIn);
+			DeviceID id = DeviceHandleToID(hMidiIn);
+			uint32_t raw = static_cast<uint32_t>(dwParam1);
 			resource_lock.lock();
-			message_queue.push(MidiMessage(source_id, dwParam1));
+			message_queue.push(MidiMessage(id, raw));
 			resource_lock.unlock();
 		}
 		else if (wMsg == MIM_CLOSE)
 		{
 			resource_lock.lock();
-			handlers_to_close.push(hMidiIn);
+			handles_to_close.push(hMidiIn);
 			resource_lock.unlock();
 		}
 	}
 
 	// Retrieve a name of a given device.
-	std::wstring GetDeviceName(HMIDIIN handle)
+	std::wstring GetDeviceName(DeviceHandle handle)
 	{
 		auto casted_id = reinterpret_cast<UINT_PTR>(handle);
 		MIDIINCAPS caps;
@@ -72,17 +103,17 @@ namespace
 		return L"unknown";
 	}
 
-	// Open a MIDI device with a given ID
-	void OpenDevice(uint32_t id)
+	// Open a MIDI device with a given index.
+	void OpenDevice(unsigned int index)
 	{
 		static const DWORD_PTR callback = reinterpret_cast<DWORD_PTR>(MidiInProc);
-		HMIDIIN handle;
-		if (midiInOpen(&handle, id, callback, NULL, CALLBACK_FUNCTION) == MMSYSERR_NOERROR)
+		DeviceHandle handle;
+		if (midiInOpen(&handle, index, callback, NULL, CALLBACK_FUNCTION) == MMSYSERR_NOERROR)
 		{
 			if (midiInStart(handle) == MMSYSERR_NOERROR)
 			{
 				resource_lock.lock();
-				active_handlers.push_back(handle);
+				active_handles.push_back(handle);
 				resource_lock.unlock();
 
 				std::wcout << L"Device opened: " << GetDeviceName(handle);
@@ -96,12 +127,12 @@ namespace
 	}
 
 	// Close a given handler.
-	void CloseDevice(HMIDIIN handle)
+	void CloseDevice(DeviceHandle handle)
 	{
 		midiInClose(handle);
 
 		resource_lock.lock();
-		active_handlers.remove(handle);
+		active_handles.remove(handle);
 		resource_lock.unlock();
 
 		std::wcout << "Device closed: " << handle << std::endl;
@@ -120,9 +151,9 @@ namespace
 		resource_lock.lock();
 
 		// Close disconnected handlers.
-		while (!handlers_to_close.empty()) {
-			CloseDevice(handlers_to_close.top());
-			handlers_to_close.pop();
+		while (!handles_to_close.empty()) {
+			CloseDevice(handles_to_close.top());
+			handles_to_close.pop();
 		}
 
 		// Try open all devices to detect newly connected ones.
@@ -135,8 +166,8 @@ namespace
 	void CloseAllDevices()
 	{
 		resource_lock.lock();
-		while (!active_handlers.empty())
-			CloseDevice(active_handlers.front());
+		while (!active_handles.empty())
+			CloseDevice(active_handles.front());
 		resource_lock.unlock();
 	}
 }
