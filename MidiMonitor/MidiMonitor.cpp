@@ -94,13 +94,15 @@ namespace
 	}
 
 	// Retrieve a name of a given device.
-	std::wstring GetDeviceName(DeviceHandle handle)
+	std::string GetDeviceName(DeviceHandle handle)
 	{
 		auto casted_id = reinterpret_cast<UINT_PTR>(handle);
 		MIDIINCAPS caps;
-		if (midiInGetDevCaps(casted_id, &caps, sizeof(caps)) == MMSYSERR_NOERROR)
-			return caps.szPname;
-		return L"unknown";
+		if (midiInGetDevCaps(casted_id, &caps, sizeof(caps)) == MMSYSERR_NOERROR) {
+			std::wstring name(caps.szPname);
+			return std::string(name.begin(), name.end());
+		}
+		return "unknown";
 	}
 
 	// Open a MIDI device with a given index.
@@ -116,8 +118,8 @@ namespace
 				active_handles.push_back(handle);
 				resource_lock.unlock();
 
-				std::wcout << L"Device opened: " << GetDeviceName(handle);
-				std::wcout << L" at " << handle << std::endl;
+				std::cout << "Device opened: " << GetDeviceName(handle);
+				std::cout << " at " << handle << std::endl;
 			}
 			else
 			{
@@ -135,7 +137,7 @@ namespace
 		active_handles.remove(handle);
 		resource_lock.unlock();
 
-		std::wcout << "Device closed: " << handle << std::endl;
+		std::cout << "Device closed: " << handle << std::endl;
 	}
 
 	// Open the all devices.
