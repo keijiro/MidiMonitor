@@ -72,7 +72,7 @@ namespace
     
     extern "C" void MIDIReadProc(const MIDIPacketList *packetList, void *readProcRefCon, void *srcConnRefCon)
     {
-        auto source_id = *reinterpret_cast<MIDIUniqueID*>(srcConnRefCon);
+        auto source_id = static_cast<MIDIUniqueID>(reinterpret_cast<intptr_t>(srcConnRefCon));
         
         message_queue_lock.lock();
         
@@ -107,10 +107,10 @@ namespace
         if (midi_client != 0) MIDIClientDispose(midi_client);
         
         // Create a MIDI client.
-        if (MIDIClientCreate(CFSTR("UnityMIDIReceiver Client"), MIDIStateChangedHander, nullptr, &midi_client) != noErr) return false;
+        if (MIDIClientCreate(CFSTR("UnityMIDIReceiver Client"), MIDIStateChangedHander, NULL, &midi_client) != noErr) return false;
         
         // Create a MIDI port which covers all the MIDI sources.
-        if (MIDIInputPortCreate(midi_client, CFSTR("UnityMIDIReceiver Input Port"), MIDIReadProc, nullptr, &midi_port) != noErr) return false;
+        if (MIDIInputPortCreate(midi_client, CFSTR("UnityMIDIReceiver Input Port"), MIDIReadProc, NULL, &midi_port) != noErr) return false;
         
         // Enumerate the all MIDI sources.
         ItemCount sourceCount = MIDIGetNumberOfSources();
@@ -127,7 +127,7 @@ namespace
             source_ids.at(i) = id;
             
             // Connect the MIDI source to the input port.
-            if (MIDIPortConnectSource(midi_port, source, &id) != noErr) return false;
+            if (MIDIPortConnectSource(midi_port, source, reinterpret_cast<void*>(id)) != noErr) return false;
         }
         
         reset_required = false;
