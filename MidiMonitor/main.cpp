@@ -30,7 +30,7 @@ namespace
 
         uint64_t Encode64Bit() const
         {
-            uint64_t ul = source_;
+            uint64_t ul = (uint32_t)source_;
             ul |= (uint64_t)status_ << 32;
             ul |= (uint64_t)data_[0] << 40;
             ul |= (uint64_t)data_[1] << 48;
